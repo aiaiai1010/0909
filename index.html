@@ -321,22 +321,10 @@
     }
 
     function resetCalibration(){
-      // 1) メモリ上の基準値クリア
       PARAMS.calibYdiff = null;
       PARAMS.calibNoseZ = null;
-      // 2) ローカル保存も削除
-      try { localStorage.removeItem('posture-calib'); } catch {}
-      // 3) 平滑値・ヒステリシス・持続判定の状態もリセット
-      sYdiff = null; sNoseZ = null;
-      wasDown = false; wasUp = false; wasClose = false; wasFar = false;
-      enterStart = null; exitStart = null; bentState = false;
-      faceState = { dir: 'straight', prox: '通常距離' };
-      // 4) 画面表示の更新
+      localStorage.removeItem('posture-calib');
       setWarning(false, 'キャリブを解除しました');
-      output.textContent = `Pitch: ${sPitch.toFixed(2)}°
-Roll:  ${sRoll.toFixed(2)}°
-顔向き: ${faceState.dir}
-顔距離: ${faceState.prox}`;
     }
 
     function saveCalibration(y, z){
