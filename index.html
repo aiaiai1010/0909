@@ -146,46 +146,12 @@
     let exitStart  = null;
     let wasDown = false, wasUp = false, wasClose = false, wasFar = false;
 
-    // センサー監視
-    let lastOriTs = 0;
-    let lastMotTs = 0;
-
     function handleOrientation(e){
-      if (typeof e.beta === 'number' && typeof e.gamma === 'number') {
-        lastOriTs = performance.now();
-        rawPitch = e.beta;   // -180..180
-        rawRoll  = e.gamma;  //  -90.. 90
-        sPitch = PARAMS.alphaPitch * rawPitch + (1 - PARAMS.alphaPitch) * sPitch;
-        sRoll  = PARAMS.alphaRoll  * rawRoll  + (1 - PARAMS.alphaRoll ) * sRoll;
-      }
-    }
-
-    // devicemotion からのフォールバック（加速度でピッチ推定）
-    function handleMotion(e){
-      lastMotTs = performance.now();
-      const a = e.accelerationIncludingGravity;
-      if (!a) return;
-      const ax = a.x ?? 0, ay = a.y ?? 0, az = a.z ?? 0;
-      // 簡易推定：端末座標系→ピッチ角（度）
-      const pitchRad = Math.atan2(-ax, Math.sqrt(ay*ay + az*az));
-      const rollRad  = Math.atan2( ay, az );
-      const pitchDeg = pitchRad * 180/Math.PI;
-      const rollDeg  = rollRad  * 180/Math.PI;
-      rawPitch = pitchDeg; rawRoll = rollDeg;
+      rawPitch = (e.beta  ?? 0);
+      rawRoll  = (e.gamma ?? 0);
       sPitch = PARAMS.alphaPitch * rawPitch + (1 - PARAMS.alphaPitch) * sPitch;
       sRoll  = PARAMS.alphaRoll  * rawRoll  + (1 - PARAMS.alphaRoll ) * sRoll;
     }
-
-    // センサー生存監視：3秒イベントが来ない場合に注意表示
-    setInterval(() => {
-      const now = performance.now();
-      if (now - lastOriTs > 3000 && now - lastMotTs > 3000) {
-        if (startBtn.disabled) {
-          warning.textContent = 'センサー未取得：HTTPS/許可/設定を確認してください';
-          warning.className = 'bad';
-        }
-      }
-    }, 1000);
 
     const faceMesh = new FaceMesh({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` });
     faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
@@ -221,12 +187,9 @@
       updateSustain(isBentNow);
 
       output.textContent =
-        `Pitch: ${sPitch.toFixed(2)}°
-` +
-        `Roll:  ${sRoll.toFixed(2)}°
-` +
-        `顔向き: ${faceState.dir}
-` +
+        `Pitch: ${sPitch.toFixed(2)}°\n` +
+        `Roll:  ${sRoll.toFixed(2)}°\n` +
+        `顔向き: ${faceState.dir}\n` +
         `顔距離: ${faceState.prox}`;
     });
 
@@ -322,25 +285,16 @@
     }
 
     async function startAll(){
-      // iOS: 明示的許可
       if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
         try {
-          const res1 = await DeviceOrientationEvent.requestPermission();
-          if (res1 === 'granted') window.addEventListener('deviceorientation', handleOrientation, true);
-          else { output.textContent = 'センサーの利用が許可されませんでした（Orientation）。'; return; }
-          // ついでに Motion も許可（フォールバック用）
-          if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function'){
-            try { const res2 = await DeviceMotionEvent.requestPermission(); if (res2 === 'granted') window.addEventListener('devicemotion', handleMotion, true); } catch {}
-          } else {
-            window.addEventListener('devicemotion', handleMotion, true);
-          }
+          const res = await DeviceOrientationEvent.requestPermission();
+          if (res === 'granted') window.addEventListener('deviceorientation', handleOrientation);
+          else { output.textContent = 'センサーの利用が許可されませんでした。'; return; }
         } catch {
           output.textContent = 'センサー許可でエラーが発生しました。'; return;
         }
       } else {
-        // Android/PC 等：直接購読（HTTPS 必須）
-        window.addEventListener('deviceorientation', handleOrientation, true);
-        window.addEventListener('devicemotion', handleMotion, true);
+        window.addEventListener('deviceorientation', handleOrientation);
       }
 
       await initCamera();
@@ -369,16 +323,8 @@
     function resetCalibration(){
       PARAMS.calibYdiff = null;
       PARAMS.calibNoseZ = null;
-      try { localStorage.removeItem('posture-calib'); } catch {}
-      sYdiff = null; sNoseZ = null;
-      wasDown = false; wasUp = false; wasClose = false; wasFar = false;
-      enterStart = null; exitStart = null; bentState = false;
-      faceState = { dir: 'straight', prox: '通常距離' };
+      localStorage.removeItem('posture-calib');
       setWarning(false, 'キャリブを解除しました');
-      output.textContent = `Pitch: ${sPitch.toFixed(2)}°
-Roll:  ${sRoll.toFixed(2)}°
-顔向き: ${faceState.dir}
-顔距離: ${faceState.prox}`;
     }
 
     function saveCalibration(y, z){
