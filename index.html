@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>首姿勢＋顔距離(Z)判定｜（0）9月改良版（閾値補正・フィルタリング・持続警告）</title>
+  <title>首姿勢＋顔距離(Z)判定｜9月改良版（閾値補正・フィルタリング・持続警告）</title>
   <style>
     :root {
       --w: 360px; /* プレビュー幅 */
@@ -61,6 +61,7 @@
     button:disabled { opacity: .6; cursor: not-allowed; }
 
     .panel { width: min(680px, 92vw); background: #fff; border: 1px solid #eee; border-radius: 12px; padding: 12px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-line; }
 
     #warning {
@@ -71,11 +72,13 @@
 
     .hint { color: #666; font-size: 13px; }
     .badge { display:inline-block; padding:2px 8px; border-radius:999px; background:#f1f5f9; font-size:12px; }
+    .kv { display:flex; gap:6px; flex-wrap:wrap; }
+    .kv span { background:#eef2ff; border:1px solid #e0e7ff; border-radius:7px; padding:2px 6px; }
   </style>
 </head>
 <body>
   <header>
-    <h1>首姿勢＋顔距離(Z)判定｜9月改良版 <span class="badge">閾値補正/フィルタ/持続警告</span></h1>
+    <h1>首姿勢＋顔距離(Z)判定｜（0）9月改良版 <span class="badge">閾値補正/フィルタ/持続警告</span></h1>
   </header>
 
   <main>
@@ -91,9 +94,15 @@
 
     <section class="panel">
       <div id="warning" class="ok">測定待機中</div>
-      <div>
-        <h3>現在値</h3>
-        <div id="output" class="mono">読み取り中...</div>
+      <div class="row">
+        <div>
+          <h3>現在値</h3>
+          <div id="output" class="mono">読み取り中...</div>
+        </div>
+        <div>
+          <h3>設定・閾値</h3>
+          <div id="params" class="mono"></div>
+        </div>
       </div>
       <p class="hint">使い方：<strong>測定開始</strong> → 楽な正しい姿勢で <strong>ニュートラルをキャリブレーション</strong>（任意）→ 不要なら <strong>キャリブ解除</strong>。iOS は開始時にセンサー許可が必要です。</p>
     </section>
@@ -104,55 +113,85 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
   <script>
+    // ===== パラメータ（9月タスク向けに調整しやすいよう集約） =====
     const PARAMS = {
+      // 平滑化（IIR フィルタ）係数：0〜1（大きいほど新しい値を優先）
       alphaPitch: 0.25,
       alphaRoll: 0.25,
       alphaYdiff: 0.3,
       alphaNoseZ: 0.25,
+
+      // キャリブレーションの初期値（null なら未設定）
       calibYdiff: null,
       calibNoseZ: null,
-      downEnter: -0.035,
-      downExit:  -0.020,
-      upEnter:    0.045,
-      upExit:     0.030,
-      absDownEnter: 0.13,
-      absUpEnter:   0.19,
-      absExitBand:  0.02,
+
+      // 顔向き判定（yDiff は chin.y - nose.y）
+      // ニュートラルとの差分 deltaY = yDiff - calibYdiff を使う。
+      // キャリブなしの場合は既定の絶対閾値にフォールバック。
+      // 下向き/上向きのエントリ閾値と、解除用ヒステリシスを別に設定。
+      downEnter: -0.035,   // より小さくなったら「down」
+      downExit:  -0.020,   // ここまで戻ったら解除
+      upEnter:    0.045,   // より大きくなったら「up」
+      upExit:     0.030,   // ここまで戻ったら解除
+
+      // キャリブ未実施時の絶対判定（既存値の経験則）
+      absDownEnter: 0.13,  // yDiff < 0.13 → down
+      absUpEnter:   0.19,  // yDiff > 0.19 → up
+      absExitBand:  0.02,  // ヒステリシス幅
+
+      // 顔距離（nose.z の相対判定）
+      // deltaZ = noseZ - calibNoseZ。より負なら近い。
       closeEnter:  -0.035,
       closeExit:   -0.015,
       farEnter:     0.020,
       farExit:      0.005,
+
+      // キャリブ未実施時の絶対距離判定（経験則）
       absCloseEnter: -0.15,
       absFarEnter:   -0.10,
       absZExitBand:   0.02,
-      sustainMs: 1800,
-      clearMs:   900,
+
+      // 警告ロジック：持続時間（ms）と解消に必要な持続時間（ms）
+      sustainMs: 1800,     // 条件が連続で続いたら警告 ON
+      clearMs:   900,      // 条件が連続で外れたら警告 OFF
     };
 
+    // ===== 要素参照 =====
     const video  = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx    = canvas.getContext('2d');
     const output = document.getElementById('output');
     const warning= document.getElementById('warning');
+    const paramsEl = document.getElementById('params');
     const startBtn = document.getElementById('startBtn');
     const calibBtn = document.getElementById('calibBtn');
     const resetBtn = document.getElementById('resetBtn');
 
+    // ===== センサー値（生 & 平滑） =====
     let rawPitch=0, rawRoll=0;
     let sPitch=0, sRoll=0, sYdiff=null, sNoseZ=null;
-    let faceState = { dir: 'straight', prox: '通常距離' };
-    let bentState = false;
-    let enterStart = null;
-    let exitStart  = null;
+
+    // ===== 状態管理 =====
+    let faceState = { dir: 'straight', prox: '通常距離' }; // dir: down/straight/up, prox: 顔が近い/遠い/通常距離
+    let bentState = false; // 最終的な「首が曲がっている」状態
+
+    // 持続判定用タイムスタンプ
+    let enterStart = null; // 条件が成立し続けている開始時刻
+    let exitStart  = null; // 条件が不成立になり続けている開始時刻
+
+    // ヒステリシス保持
     let wasDown = false, wasUp = false, wasClose = false, wasFar = false;
 
+    // ===== Device Orientation（前後/左右の傾き） =====
     function handleOrientation(e){
-      rawPitch = (e.beta  ?? 0);
-      rawRoll  = (e.gamma ?? 0);
+      rawPitch = (e.beta  ?? 0);   // -180〜180（目安）
+      rawRoll  = (e.gamma ?? 0);   // -90〜90  （目安）
+      // IIR 平滑化
       sPitch = PARAMS.alphaPitch * rawPitch + (1 - PARAMS.alphaPitch) * sPitch;
       sRoll  = PARAMS.alphaRoll  * rawRoll  + (1 - PARAMS.alphaRoll ) * sRoll;
     }
 
+    // ===== MediaPipe FaceMesh =====
     const faceMesh = new FaceMesh({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` });
     faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: false, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 
@@ -169,65 +208,87 @@
       const lm = results.multiFaceLandmarks[0];
       const nose = lm[1];
       const chin = lm[152];
+
+      // 主要2点を強調
       drawPoint(nose, '#22c55e');
       drawPoint(chin, '#2563eb');
 
-      const yDiff = (chin.y - nose.y);
-      const noseZ = nose.z;
+      const yDiff = (chin.y - nose.y); // 小さい→下向き／大きい→上向き
+      const noseZ = nose.z;            // より負→カメラに近い
 
+      // IIR 平滑
       sYdiff = (sYdiff == null) ? yDiff : PARAMS.alphaYdiff * yDiff + (1 - PARAMS.alphaYdiff) * sYdiff;
       sNoseZ = (sNoseZ == null) ? noseZ : PARAMS.alphaNoseZ * noseZ + (1 - PARAMS.alphaNoseZ) * sNoseZ;
 
+      // ===== 顔向き（上下）判定 with ヒステリシス & キャリブ対応 =====
       const dir = classifyDirection(sYdiff);
       faceState.dir = dir;
+
+      // ===== 顔距離（近い/遠い/通常）判定 =====
       const prox = classifyProximity(sNoseZ);
       faceState.prox = prox;
 
+      // ===== 9月タスク：警告条件の持続判定 =====
       const isBentNow = isBent(faceState.dir, faceState.prox, sPitch);
       updateSustain(isBentNow);
 
+      // 出力
       output.textContent =
         `Pitch: ${sPitch.toFixed(2)}°\n` +
         `Roll:  ${sRoll.toFixed(2)}°\n` +
+        `yDiff(平滑): ${sYdiff.toFixed(4)}\n` +
+        `noseZ(平滑): ${sNoseZ.toFixed(4)}\n` +
         `顔向き: ${faceState.dir}\n` +
         `顔距離: ${faceState.prox}`;
+
+      renderParams();
     });
 
     function drawPoint(normLandmark, color) {
-      const x = normLandmark.x * canvas.width;
+      const x = (1 - normLandmark.x) * canvas.width;  // 反転描画のため (scaleX(-1))
       const y = normLandmark.y * canvas.height;
       ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
     }
 
+    // 顔向き分類
     function classifyDirection(y) {
       if (PARAMS.calibYdiff != null) {
         const dy = y - PARAMS.calibYdiff;
         if (!wasDown && dy <= PARAMS.downEnter) { wasDown = true; wasUp = false; return 'down'; }
-        if (wasDown && dy >= PARAMS.downExit)  { wasDown = false; }
+        if (wasDown && dy >= PARAMS.downExit)  { wasDown = false; /* fall through */ }
+
         if (!wasUp && dy >= PARAMS.upEnter)    { wasUp = true; wasDown = false; return 'up'; }
-        if (wasUp && dy <= PARAMS.upExit)      { wasUp = false; }
+        if (wasUp && dy <= PARAMS.upExit)      { wasUp = false; /* fall through */ }
+
         if (wasDown) return 'down';
         if (wasUp)   return 'up';
         return 'straight';
       } else {
-        const lower = PARAMS.absDownEnter, upper = PARAMS.absUpEnter, band = PARAMS.absExitBand;
+        // キャリブなし：絶対値＋ヒステリシス
+        const lower = PARAMS.absDownEnter, upper = PARAMS.absUpEnter;
+        const band = PARAMS.absExitBand;
         if (!wasDown && y < lower) { wasDown = true; wasUp = false; return 'down'; }
         if (wasDown && y > lower + band) { wasDown = false; }
+
         if (!wasUp && y > upper)  { wasUp = true; wasDown = false; return 'up'; }
         if (wasUp && y < upper - band) { wasUp = false; }
+
         if (wasDown) return 'down';
         if (wasUp)   return 'up';
         return 'straight';
       }
     }
 
+    // 顔距離分類
     function classifyProximity(z) {
       if (PARAMS.calibNoseZ != null) {
-        const dz = z - PARAMS.calibNoseZ;
+        const dz = z - PARAMS.calibNoseZ; // 負ほど近い
         if (!wasClose && dz <= PARAMS.closeEnter) { wasClose = true; wasFar = false; return '顔が近い'; }
         if (wasClose && dz >= PARAMS.closeExit)   { wasClose = false; }
+
         if (!wasFar && dz >= PARAMS.farEnter)     { wasFar = true; wasClose = false; return '顔が遠い'; }
         if (wasFar && dz <= PARAMS.farExit)       { wasFar = false; }
+
         if (wasClose) return '顔が近い';
         if (wasFar)   return '顔が遠い';
         return '通常距離';
@@ -235,23 +296,33 @@
         const close = PARAMS.absCloseEnter, far = PARAMS.absFarEnter, band = PARAMS.absZExitBand;
         if (!wasClose && z < close) { wasClose = true; wasFar = false; return '顔が近い'; }
         if (wasClose && z > close + band) { wasClose = false; }
+
         if (!wasFar && z > far) { wasFar = true; wasClose = false; return '顔が遠い'; }
         if (wasFar && z < far - band) { wasFar = false; }
+
         if (wasClose) return '顔が近い';
         if (wasFar)   return '顔が遠い';
         return '通常距離';
       }
     }
 
+    // 最終警告条件（9月テーマ）
     function isBent(dir, prox, pitch){
+      // 既存ロジックをベースに簡潔化：
+      // 1) 顔が近い かつ 端末ピッチが小さい（<=30°） → 首を出している可能性
       if (prox === '顔が近い' && pitch <= 30) return true;
+
+      // 2) ピッチ <= 40° なら down/straight で不良判定（画面を覗き込む姿勢）
       if (pitch <= 40) return (dir === 'down' || dir === 'straight');
+
+      // 3) それ以外（ピッチが大きい持ち上げ姿勢）でも down は不良
       return (dir === 'down');
     }
 
     function updateSustain(isNow){
       const t = performance.now();
       if (isNow) {
+        // 不良姿勢が続いている
         if (enterStart == null) enterStart = t;
         exitStart = null;
         const elapsed = t - enterStart;
@@ -260,6 +331,7 @@
           setWarning(true, '首が曲がっています');
         }
       } else {
+        // 良姿勢が続いている
         if (exitStart == null) exitStart = t;
         enterStart = null;
         const elapsed = t - exitStart;
@@ -276,6 +348,21 @@
       warning.className = bad ? 'bad' : 'ok';
     }
 
+    // 画面右の「設定・閾値」表示
+    function renderParams(){
+      const p = PARAMS;
+      paramsEl.textContent = [
+        `キャリブ：yDiff=${p.calibYdiff?.toFixed?.(4) ?? '未'}, noseZ=${p.calibNoseZ?.toFixed?.(4) ?? '未'}`,
+        `上下（相対）：down<=${p.downEnter}, 解除>=${p.downExit} / up>=${p.upEnter}, 解除<=${p.upExit}`,
+        `上下（絶対）：down<${p.absDownEnter}, up>${p.absUpEnter} (バンド±${p.absExitBand})`,
+        `距離（相対）：近<=${p.closeEnter}, 解除>=${p.closeExit} / 遠>=${p.farEnter}, 解除<=${p.farExit}`,
+        `距離（絶対）：近<${p.absCloseEnter}, 遠>${p.absFarEnter} (バンド±${p.absZExitBand})`,
+        `持続：ON ${p.sustainMs}ms / OFF ${p.clearMs}ms`,
+        `平滑α：pitch=${p.alphaPitch}, roll=${p.alphaRoll}, yDiff=${p.alphaYdiff}, noseZ=${p.alphaNoseZ}`,
+      ].join('\n');
+    }
+
+    // ===== カメラ初期化 =====
     async function initCamera(){
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
       video.srcObject = stream;
@@ -285,6 +372,7 @@
     }
 
     async function startAll(){
+      // iOS のセンサー許可
       if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
         try {
           const res = await DeviceOrientationEvent.requestPermission();
@@ -308,16 +396,19 @@
       startBtn.disabled = true; calibBtn.disabled = false; resetBtn.disabled = false;
       setWarning(false, '測定中...');
 
+      // 前回のキャリブを復元
       const saved = loadCalibration();
       if (saved) { PARAMS.calibYdiff = saved.y; PARAMS.calibNoseZ = saved.z; }
     }
 
+    // ===== キャリブレーション =====
     function calibrate(){
       if (sYdiff == null || sNoseZ == null) return;
       PARAMS.calibYdiff = sYdiff;
       PARAMS.calibNoseZ = sNoseZ;
       saveCalibration(PARAMS.calibYdiff, PARAMS.calibNoseZ);
       setWarning(false, 'ニュートラルを登録しました');
+      renderParams();
     }
 
     function resetCalibration(){
@@ -325,16 +416,19 @@
       PARAMS.calibNoseZ = null;
       localStorage.removeItem('posture-calib');
       setWarning(false, 'キャリブを解除しました');
+      renderParams();
     }
 
     function saveCalibration(y, z){
-      try { localStorage.setItem('posture-calib', JSON.stringify({ y, z })); } catch { }
+      try { localStorage.setItem('posture-calib', JSON.stringify({ y, z })); } catch { /* ignore */ }
     }
     function loadCalibration(){
       try { return JSON.parse(localStorage.getItem('posture-calib')); } catch { return null; }
     }
 
+    // ===== イベント束ね =====
     window.addEventListener('load', () => {
+      renderParams();
       startBtn.addEventListener('click', startAll);
       calibBtn.addEventListener('click', calibrate);
       resetBtn.addEventListener('click', resetCalibration);
