@@ -245,7 +245,7 @@
     });
 
     function drawPoint(normLandmark, color) {
-      const x = (1 - normLandmark.x) * canvas.width;  // 反転描画のため (scaleX(-1))
+      const x = normLandmark.x * canvas.width;  // 反転描画のため (scaleX(-1))
       const y = normLandmark.y * canvas.height;
       ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
     }
