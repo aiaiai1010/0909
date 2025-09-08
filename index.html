@@ -159,7 +159,6 @@
     const ctx    = canvas.getContext('2d');
     const output = document.getElementById('output');
     const warning= document.getElementById('warning');
-    const paramsEl = document.getElementById('params');
     const startBtn = document.getElementById('startBtn');
     const calibBtn = document.getElementById('calibBtn');
     const resetBtn = document.getElementById('resetBtn');
@@ -238,7 +237,7 @@
         `顔向き: ${faceState.dir}\n` +
         `顔距離: ${faceState.prox}`;
 
-      renderParams();
+      
     });
 
     function drawPoint(normLandmark, color) {
@@ -346,18 +345,7 @@
     }
 
     // 画面右の「設定・閾値」表示
-    function renderParams(){
-      const p = PARAMS;
-      paramsEl.textContent = [
-        `キャリブ：yDiff=${p.calibYdiff?.toFixed?.(4) ?? '未'}, noseZ=${p.calibNoseZ?.toFixed?.(4) ?? '未'}`,
-        `上下（相対）：down<=${p.downEnter}, 解除>=${p.downExit} / up>=${p.upEnter}, 解除<=${p.upExit}`,
-        `上下（絶対）：down<${p.absDownEnter}, up>${p.absUpEnter} (バンド±${p.absExitBand})`,
-        `距離（相対）：近<=${p.closeEnter}, 解除>=${p.closeExit} / 遠>=${p.farEnter}, 解除<=${p.farExit}`,
-        `距離（絶対）：近<${p.absCloseEnter}, 遠>${p.absFarEnter} (バンド±${p.absZExitBand})`,
-        `持続：ON ${p.sustainMs}ms / OFF ${p.clearMs}ms`,
-        `平滑α：pitch=${p.alphaPitch}, roll=${p.alphaRoll}, yDiff=${p.alphaYdiff}, noseZ=${p.alphaNoseZ}`,
-      ].join('\n');
-    }
+    
 
     // ===== カメラ初期化 =====
     async function initCamera(){
@@ -405,7 +393,7 @@
       PARAMS.calibNoseZ = sNoseZ;
       saveCalibration(PARAMS.calibYdiff, PARAMS.calibNoseZ);
       setWarning(false, 'ニュートラルを登録しました');
-      renderParams();
+      
     }
 
     function resetCalibration(){
@@ -413,7 +401,7 @@
       PARAMS.calibNoseZ = null;
       localStorage.removeItem('posture-calib');
       setWarning(false, 'キャリブを解除しました');
-      renderParams();
+      
     }
 
     function saveCalibration(y, z){
@@ -425,7 +413,7 @@
 
     // ===== イベント束ね =====
     window.addEventListener('load', () => {
-      renderParams();
+      
       startBtn.addEventListener('click', startAll);
       calibBtn.addEventListener('click', calibrate);
       resetBtn.addEventListener('click', resetCalibration);
