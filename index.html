@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>首姿勢＋顔距離(Z)判定｜9月改良版（閾値補正・フィルタリング・持続警告）</title>
   <style>
-    :root { --w: 120px; --h: 160px; }
+    :root { --w: 160px; --h: 213px; }
 
     body {
       font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans JP", "Apple Color Emoji", "Segoe UI Emoji";
@@ -27,7 +27,7 @@
     video, canvas {
       transform: scaleX(-1);
       width: var(--w); height: var(--h);
-      border: 1px solid #ddd; background: #000; border-radius: 8px;
+      border: 1px solid #ccc; background: #000; border-radius: 6px;
     }
 
     .controls { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
@@ -54,7 +54,7 @@
 </head>
 <body>
   <header>
-    <h1>首姿勢＋顔距離(Z)判定｜（1）9月改良版 <span class="badge">閾値補正/フィルタ/持続警告</span></h1>
+    <h1>首姿勢＋顔距離(Z)判定｜（0）9月改良版 <span class="badge">閾値補正/フィルタ/持続警告</span></h1>
   </header>
 
   <main>
