@@ -35,9 +35,11 @@
     }
 
     .stage {
-      display: grid;
+      display: flex;
       gap: 8px;
-      place-items: center;
+      justify-content: center;
+      align-items: center;
+      flex-wrap: wrap; 
     }
     video, canvas {
       transform: scaleX(-1);
