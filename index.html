@@ -17,17 +17,17 @@
     main { display: grid; grid-template-columns: 1fr; gap: 12px; padding: 12px; place-items: center; }
 
     /* ステージは縦に並べ、映像ペアだけ横並びにする */
-    .stage { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+    .stage { display: flex; flex-direction: column; gap: 8px; align-items: center; }
 
     .pair {
       display: flex; gap: 8px; align-items: center; justify-content: center;
-      flex-wrap: wrap; /* 幅が狭いときは縦に折り返し */
+      flex-direction: row; /* 幅が狭いときは縦に折り返し */
     }
 
     video, canvas {
       transform: scaleX(-1);
       width: var(--w); height: var(--h);
-      border: 1px solid #ccc; background: #000; border-radius: 6px;
+      border: 1px solid #ddd; background: #000; border-radius: 6px;
     }
 
     .controls { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
@@ -54,7 +54,7 @@
 </head>
 <body>
   <header>
-    <h1>首姿勢＋顔距離(Z)判定｜（0）9月改良版 <span class="badge">閾値補正/フィルタ/持続警告</span></h1>
+    <h1>首姿勢＋顔距離(Z)判定｜（1）9月改良版 <span class="badge">閾値補正/フィルタ/持続警告</span></h1>
   </header>
 
   <main>
